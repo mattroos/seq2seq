@@ -269,6 +269,7 @@ plt.title('model loss')
 plt.ylabel('loss')
 plt.xlabel('epoch')
 plt.legend(['train', 'test'], loc='upper left')
+plt.show()
 
 ## Save loss and accuracy values
 a = {'acc': history.history['acc'], 'val_acc': history.history['val_acc'], 'loss': history.history['loss'], 'val_loss': history.history['val_loss']}
@@ -309,4 +310,5 @@ for ix in range(len(dataVal)):
     # plt.title(lineStringsTrain[ix])
     # plt.colorbar()
 
+    plt.show()
     plt.waitforbuttonpress()
