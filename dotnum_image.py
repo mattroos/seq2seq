@@ -7,13 +7,13 @@ from __future__ import print_function
 
 # Set random seed before importing anything from keras
 import numpy as np
-# seed = int(np.random.uniform() * 10000)
-# print("Seed = " + str(seed))
-# np.random.seed(seed)
-np.random.seed(2)
+seed = int(np.random.uniform() * 9999)
+print("Seed = " + str(seed))
+np.random.seed(seed)
+#np.random.seed(2)
 
 
-from keras.models import Sequential
+from keras.models import Sequential, model_from_json
 from keras import layers
 from six.moves import range
 import time
@@ -334,7 +334,8 @@ def get_data_pos(nSamples):
     maxNumLength = 8    # maximum number of digits in DOT number, e.g., 12345678
     maxPreText = 5
     maxPostText = 10
-    maxTotalLength = maxPreText + 1 + 3 + 3 + maxNumLength + 1 + maxPostText # 1,3,3,1 --> space, 'DOT', space, [space,-/#,space], space
+    # maxTotalLength = maxPreText + 1 + 3 + 3 + maxNumLength + 1 + maxPostText # 1,3,3,1 --> space, 'DOT', space, [space,-/#,space], space
+    maxTotalLength = maxPreText + 1 + 3 + 3 + maxNumLength + 1 + maxPostText # 1,3,3,1 --> space, 'US DOT', space, [space,-/#,space], space
     print("Max input string length = " + str(maxTotalLength))
     pix_height = 32
     pix_width = 16 * maxTotalLength
@@ -348,6 +349,7 @@ def get_data_pos(nSamples):
     nDigits = np.random.randint(minNumLength,maxNumLength+1, nSamples)
     nPreText = np.random.randint(0,maxPreText+1, nSamples)
     nPostText = np.random.randint(0,maxPostText+1, nSamples)
+    dotText = np.random.choice(['DOT','USDOT','US DOT'], nSamples)
 
     preMidSpace = np.random.choice((' ',''), nSamples).tolist()
     midChar = np.random.choice(('-','#',''), nSamples).tolist()
@@ -378,9 +380,12 @@ def get_data_pos(nSamples):
         digits = digits.tostring()
         dotnumbers.append(digits)
 
-        fullstring = preText + 'DOT' + preMidSpace[i] + midChar[i] + postMidSpace[i] + digits + postText
-        # fullstring = (' ' * (maxTotalLength-len(fullstring))) + fullstring    # prepad
-        fullstring = fullstring + (' ' * (maxTotalLength-len(fullstring)))    # postpad
+        # fullstring = preText + 'DOT' + preMidSpace[i] + midChar[i] + postMidSpace[i] + digits + postText
+        fullstring = preText + dotText[i] + preMidSpace[i] + midChar[i] + postMidSpace[i] + digits + postText
+
+        # fullstring = (' ' * (maxTotalLength-len(fullstring))) + fullstring    # prepad with spaces
+        fullstring = fullstring + (' ' * (maxTotalLength-len(fullstring)))    # postpad with spaces
+
         textlines.append(fullstring)
 
         im = paint_text(fullstring, pix_width, pix_height, rotate=True, ud=True, multi_fonts=True)
@@ -433,8 +438,8 @@ def get_data_neg(nSamples, maxInputLength, maxOutputLen):
 
 ## Data array dimension ordering is (samples, sequence_length, input_nodes).
 BATCH_SIZE = 32
-nPos = int(100 / BATCH_SIZE) * BATCH_SIZE
-nNeg = int(100 / BATCH_SIZE) * BATCH_SIZE
+nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
 bInvertSeq = True
 
 print('\nBuilding training data set...')
@@ -495,17 +500,6 @@ print(dataVal.shape)
 print(labelsVal.shape)
 
 
-# # Plot the text regions
-# plt.figure(1)
-# for i in range(len(dataTrain)):
-#   plt.clf()
-#   plt.imshow(np.squeeze(dataTrain[i]))
-#   plt.colorbar()
-#   plt.show()
-#   plt.waitforbuttonpress()
-# exit()
-
-
 ## Build the model....
 
 nKernSize = 3
@@ -520,16 +514,11 @@ RNN = layers.GRU   # Try LSTM, GRU, or SimpleRNN
 HIDDEN_SIZE = 256
 DECODE_LAYERS = 1
 
-# x = np.round(np.random.uniform(size=(nSamples, nRows, nCols, nChan)))
-# # May need to flip the input images such that space-to-sequence conversion it top-bottom rather than left-right,
-# # due to way the layers.core.Reshape works.  Or build a transpose layer/operation?
-# x = x.transpose(0,2,1,3)
-
-bUseSavedModel = True
-
+bUseSavedModel = False
 if bUseSavedModel:
-    model = keras.models.load_model('model_dotnum_120_seed1.h5')
-    startEpoch = 120
+    model = model_from_json(open('model_dotnum_epoch150_seed2604_usdot_arch.json').read())
+    model.load_weights('model_dotnum_epoch150_seed2604_usdot_weights.h5')
+    startEpoch = 0  # 0 indexed?
 else:
     ## Build the model
     startEpoch = 0
@@ -558,7 +547,9 @@ else:
 
 
     # Reshape, converting columns to timesteps....
-    # (batch_size, timesteps/cols, rows)
+    #   (batch_size, timesteps/cols, rows)
+    # May need to flip the input images such that space-to-sequence conversion it top-bottom rather than left-right,
+    # due to way the layers.core.Reshape works.  Or build a transpose layer/operation?
     inputSeqLen = dataAll.shape[1] / 2**nConvLayers
     rnnInputDim = dataAll.shape[2] / 2**nConvLayers * nFilters[-1]
     model.add(layers.core.Reshape((inputSeqLen, rnnInputDim)))
@@ -597,22 +588,24 @@ else:
     model.add(layers.TimeDistributed(layers.Dense(11))) # 11 outputs, for one-hot ' 0123456789'
     model.add(layers.Activation('softmax'))
 
-    ## Set training loss functions and additional metrics (e.g., accuracy metric)
-    start = time.time()
-    model.compile(loss='categorical_crossentropy',
-                  optimizer='adam',
-                  metrics=['accuracy'])
-    end = time.time()
-    print("\tDone: " + str(end - start) + "seconds")
 
+## Set training loss functions and additional metrics (e.g., accuracy metric)
+start = time.time()
+model.compile(loss='categorical_crossentropy',
+              optimizer='adam',
+              metrics=['accuracy'])
+end = time.time()
+print("\tDone: " + str(end - start) + "seconds")
 
 model.summary()
 
+
 ## Train the model
+epochs = 150
 print('\nTraining the model...')
 start = time.time()
 history = History()
-model.fit(dataTrain, labelsTrain, batch_size=32, epochs=150, verbose=1, callbacks=[history], validation_split=0.0, validation_data=(dataVal, labelsVal), shuffle=True, class_weight=None, sample_weight=None, initial_epoch=startEpoch)
+model.fit(dataTrain, labelsTrain, batch_size=32, epochs=epochs, verbose=1, callbacks=[history], validation_split=0.0, validation_data=(dataVal, labelsVal), shuffle=True, class_weight=None, sample_weight=None, initial_epoch=startEpoch)
 end = time.time()
 print("\nTotal training duration: " + str((end - start)/60) + " minutes.")
 
@@ -620,14 +613,18 @@ print("\nTotal training duration: " + str((end - start)/60) + " minutes.")
 # print(history.history.keys())
 
 ## Save the model architecture and weights
+basename = 'epoch150_seed' + '{:04d}'.format(seed) + '_usdot'
 json_string = model.to_json()
-open('model_dotnum_150_seed2_arch.json', 'w').write(json_string)
-model.save_weights('model_dotnum_150_seed2_weights.h5')
+open('model_dotnum_' + basename + '_arch.json', 'w').write(json_string)
+model.save_weights('model_dotnum_' + basename + '_weights.h5')
+# open('model_dotnum_150_seed2_arch.json', 'w').write(json_string)
+# model.save_weights('model_dotnum_150_seed2_weights.h5')
 
 
 ## Save loss and accuracy values
 a = {'acc': history.history['acc'], 'val_acc': history.history['val_acc'], 'loss': history.history['loss'], 'val_loss': history.history['val_loss']}
-with open('results.pkl', 'wb') as handle:
+# with open('results.pkl', 'wb') as handle:
+with open('results_' + basename + '.pkl', 'wb') as handle:
     pickle.dump(a, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
