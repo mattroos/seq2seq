@@ -1,4 +1,4 @@
-# conv2time.py
+# dotnum_image.py
 #
 # How to take the output of a convolution layer and convert it into a sequence?
 # 4/18/17
@@ -504,7 +504,6 @@ print(labelsVal.shape)
 
 nKernSize = 3
 nFilters = (8, 16, 32)
-# nFilters = (8,)
 nConvLayers = len(nFilters)
 nRows = 32
 nCols = nRows*2
