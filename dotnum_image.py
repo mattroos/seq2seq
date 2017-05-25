@@ -26,7 +26,7 @@ import editdistance
 from scipy import ndimage
 import keras.callbacks
 from keras.preprocessing import image
-from keras.callbacks import History 
+from keras.callbacks import History, ModelCheckpoint
 
 plt.ion()
 
@@ -330,10 +330,10 @@ def get_data_pos(nSamples):
     #   3. Possible extra text before "DOT 12454"
     #   4. Possible extra text after "DOT 12454"
     #   5. Number of digits in dot number
-    minNumLength = 5    # maximum number of digits in DOT number, e.g., 12345
+    minNumLength = 4 #5   # maximum number of digits in DOT number, e.g., 12345
     maxNumLength = 8    # maximum number of digits in DOT number, e.g., 12345678
-    maxPreText = 5
-    maxPostText = 10
+    maxPreText = 0 #5
+    maxPostText = 0 #10
     # maxTotalLength = maxPreText + 1 + 3 + 3 + maxNumLength + 1 + maxPostText # 1,3,3,1 --> space, 'DOT', space, [space,-/#,space], space
     maxTotalLength = maxPreText + 1 + 3 + 3 + maxNumLength + 1 + maxPostText # 1,3,3,1 --> space, 'US DOT', space, [space,-/#,space], space
     print("Max input string length = " + str(maxTotalLength))
@@ -376,7 +376,8 @@ def get_data_pos(nSamples):
 
         # one-hot vectors as labels/output?
         digits = np.random.choice(digit_array, nDigits[i])
-        labels[i,:,:] = chars_to_onehot(np.concatenate((np.asarray([' ']*(maxNumLength-nDigits[i])),digits)))
+        # labels[i,:,:] = chars_to_onehot(np.concatenate((np.asarray([' ']*(maxNumLength-nDigits[i])), digits)))   # spaces then digits
+        labels[i,:,:] = chars_to_onehot(np.concatenate((digits, np.asarray([' ']*(maxNumLength-nDigits[i])))))   # digits then spaces
         digits = digits.tostring()
         dotnumbers.append(digits)
 
@@ -438,8 +439,8 @@ def get_data_neg(nSamples, maxInputLength, maxOutputLen):
 
 ## Data array dimension ordering is (samples, sequence_length, input_nodes).
 BATCH_SIZE = 32
-nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
-nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+nPos = int(10000 / BATCH_SIZE) * BATCH_SIZE
+nNeg = int(5000 / BATCH_SIZE) * BATCH_SIZE
 bInvertSeq = True
 
 print('\nBuilding training data set...')
@@ -483,8 +484,9 @@ lineStringsAll = [lineStringsAll[i] for i in indices]
 # dataAll += np.random.uniform(-noiseMag,noiseMag,dataAll.shape)
 
 ## Split into train and validation sets
-percentTrain = 80
-split_at = int( len(dataAll) * percentTrain/100)
+# percentTrain = 80
+# split_at = int( len(dataAll) * percentTrain/100)
+split_at = len(dataAll)-(BATCH_SIZE-14)
 (dataTrain, dataVal) = dataAll[:split_at], dataAll[split_at:]
 (labelsTrain, labelsVal) = labelsAll[:split_at], labelsAll[split_at:]
 (lineStringsTrain, lineStringsVal) = lineStringsAll[:split_at], lineStringsAll[split_at:]
@@ -499,9 +501,50 @@ print('\nValidation data and label array shapes:')
 print(dataVal.shape)
 print(labelsVal.shape)
 
+## Load real data
+dataDict = pickle.load(open('/home/mroos/Data/dotreader/dot_annotations/data_dot_image_stack.pkl','rb'))
+dataReal = np.transpose(dataDict['stack'],(0,2,1,3))
+dataReal = np.flip(dataReal, axis=2)
+if bInvertSeq:
+    dataReal = np.flip(dataReal, axis=1)
+labelsReal = dataDict['labels_onehot']
+lineStringsReal = dataDict['labels_string']
+del dataDict
+
+## Compute histogram of real DOT numbers. Use numbers that only occur once as the validation data.
+lineStringsUnique = list(set(lineStringsReal))
+lineStringsUnique.sort()
+cnts = [lineStringsReal.count(s) for s in lineStringsUnique]
+ixTrainUnique = [ix for ix,val in enumerate(cnts) if val>1]
+ixValUnique = [ix for ix,val in enumerate(cnts) if val==1]
+
+lineStringsUniqueTrain = [lineStringsUnique[i] for i in ixTrainUnique]
+lineStringsUniqueVal = [lineStringsUnique[i] for i in ixValUnique]
+
+ixTrainReal = [ix for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueTrain]
+ixValReal = [ix for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueVal]
+
+lineStringsRealTrain = [val for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueTrain]
+lineStringsRealVal = [val for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueVal]
+
+## Add real data to synthetic data
+dataTrain = np.concatenate((dataTrain, dataReal[ixTrainReal]))
+dataVal = np.concatenate((dataVal, dataReal[ixValReal]))
+labelsTrain = np.concatenate((labelsTrain, labelsReal[ixTrainReal]))
+labelsVal = np.concatenate((labelsVal, labelsReal[ixValReal]))
+lineStringsTrain = lineStringsTrain + lineStringsRealTrain
+lineStringsVal = lineStringsVal + lineStringsRealVal
+del dataReal, labelsReal, lineStringsReal
+
+## Shuffle training data
+indices = np.arange(len(dataTrain))
+np.random.shuffle(indices)
+dataTrain = dataTrain[indices]
+labelsTrain = labelsTrain[indices]
+lineStringsTrain = [lineStringsTrain[i] for i in indices]
+
 
 ## Build the model....
-
 nKernSize = 3
 nFilters = (8, 16, 32)
 nConvLayers = len(nFilters)
@@ -515,9 +558,9 @@ DECODE_LAYERS = 1
 
 bUseSavedModel = False
 if bUseSavedModel:
-    model = model_from_json(open('model_dotnum_epoch150_seed2604_usdot_arch.json').read())
-    model.load_weights('model_dotnum_epoch150_seed2604_usdot_weights.h5')
-    startEpoch = 0  # 0 indexed?
+    model = model_from_json(open('model_dotnum_epoch075_seed0127_usdot_real_arch.json').read())
+    model.load_weights('model_dotnum_epoch075_seed0127_usdot_real_weights.h5')
+    startEpoch = 75  # 0 indexed?
 else:
     ## Build the model
     startEpoch = 0
@@ -580,6 +623,7 @@ else:
         # the first dimension to be the timesteps.
         model.add(RNN(HIDDEN_SIZE,
                       # activation='tanh',
+                      activation='relu',     # tanh is the default (documentation wrongly says it's linear)
                       return_sequences=True))
 
     # Apply a dense layer to the every temporal slice of an input. For each of step
@@ -600,24 +644,33 @@ model.summary()
 
 
 ## Train the model
-epochs = 150
+epochs = 75
+# Save the model architecture
+basename = 'epoch{:03d}_seed'.format(epochs) + '{:04d}'.format(seed) + '_usdot_real_reluDecode'
+json_string = model.to_json()
+open('model_dotnum_' + basename + '_arch.json', 'w').write(json_string)
+
+# history = History()
+callbacks = [History()]
+weights_file = 'model_dotnum_' + basename + '_weights.h5'   # where weights will be saved
+callbacks.append(ModelCheckpoint(filepath=weights_file, monitor='val_loss', save_best_only=True))
+
 print('\nTraining the model...')
 start = time.time()
-history = History()
-model.fit(dataTrain, labelsTrain, batch_size=32, epochs=epochs, verbose=1, callbacks=[history], validation_split=0.0, validation_data=(dataVal, labelsVal), shuffle=True, class_weight=None, sample_weight=None, initial_epoch=startEpoch)
+model.fit(dataTrain, labelsTrain, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks, validation_split=0.0, validation_data=(dataVal, labelsVal), shuffle=True, class_weight=None, sample_weight=None, initial_epoch=startEpoch)
 end = time.time()
 print("\nTotal training duration: " + str((end - start)/60) + " minutes.")
 
+
+history = callbacks[0]
 # # list all data in history
 # print(history.history.keys())
 
-## Save the model architecture and weights
-basename = 'epoch150_seed' + '{:04d}'.format(seed) + '_usdot'
-json_string = model.to_json()
-open('model_dotnum_' + basename + '_arch.json', 'w').write(json_string)
-model.save_weights('model_dotnum_' + basename + '_weights.h5')
-# open('model_dotnum_150_seed2_arch.json', 'w').write(json_string)
-# model.save_weights('model_dotnum_150_seed2_weights.h5')
+# ## Save the model architecture and weights
+# basename = 'epoch{:03d}_seed'.format(epochs) + '{:04d}'.format(seed) + '_usdot_real'
+# json_string = model.to_json()
+# open('model_dotnum_' + basename + '_arch.json', 'w').write(json_string)
+# model.save_weights('model_dotnum_' + basename + '_weights.h5')
 
 
 ## Save loss and accuracy values
