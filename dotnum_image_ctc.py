@@ -1,0 +1,862 @@
+# dotnum_image.py
+#
+# How to take the output of a convolution layer and convert it into a sequence?
+# 4/18/17
+
+from __future__ import print_function
+
+# Set random seed before importing anything from keras
+import numpy as np
+seed = int(np.random.uniform() * 9999)
+print("Seed = " + str(seed))
+np.random.seed(seed)
+#np.random.seed(2)
+
+
+from keras.models import Sequential, model_from_json
+from keras import layers
+from six.moves import range
+import time
+import cPickle as pickle
+
+import matplotlib.pyplot as plt
+
+import cairocffi as cairo
+import editdistance
+from scipy import ndimage
+import keras.callbacks
+from keras.preprocessing import image
+from keras.callbacks import History, ModelCheckpoint
+
+from keras.layers.convolutional import Conv2D, MaxPooling2D
+from keras.layers import Input, Dense, Activation
+from keras.layers import Reshape, Lambda
+from keras.layers.merge import add, concatenate
+from keras.models import Model
+from keras import backend as K
+
+plt.ion()
+
+# this creates larger "blotches" of noise which look
+# more realistic than just adding gaussian noise
+# assumes greyscale with pixels ranging from 0 to 1
+
+def speckle(img):
+    severity = np.random.uniform(0, 0.2)
+    blur = ndimage.gaussian_filter(np.random.randn(*img.shape) * severity, 1)
+    img_speck = (img + blur)
+    img_speck[img_speck > 1] = 1
+    img_speck[img_speck <= 0] = 0
+    return img_speck
+
+
+# paints the string in a random location the bounding box
+# also uses a random font, a slight random rotation,
+# and a random amount of speckle noise
+
+def paint_text(text, w, h, rotate=False, ud=False, multi_fonts=False):
+    surface = cairo.ImageSurface(cairo.FORMAT_RGB24, w, h)
+    with cairo.Context(surface) as context:
+        bTooLong = True
+        while bTooLong:
+            intensity = np.random.uniform(low=0.0, high=0.3)    # background greyscale intensity
+            context.set_source_rgb(intensity, intensity, intensity)   # Background colors in BGR order, values from 0 to 1
+            context.paint()
+            # this font list works in Ubunut 14.04
+            fonts = ['Century Schoolbook', 'Courier', 'STIX', 'URW Chancery L', 'FreeMono', 'serif', 'sans-serif', 'cursive', 'fantasy', 'monospace']
+            slants = [cairo.FONT_SLANT_NORMAL, cairo.FONT_SLANT_ITALIC]
+            weights = [cairo.FONT_WEIGHT_BOLD, cairo.FONT_WEIGHT_NORMAL]
+            if multi_fonts:
+                context.select_font_face(np.random.choice(fonts), np.random.choice(slants), np.random.choice(weights))
+            else:
+                context.select_font_face('Courier', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+            context.set_font_size(24)
+            box = context.text_extents(text) # (x_bearing, y_bearing, width, height, x_advance, y_advance)
+            # border_w_h = (4, 4)
+            border_w_h = (2, 2)
+            if box[2] > (w - 2 * border_w_h[1]) or box[3] > (h - 2 * border_w_h[0]):
+                # raise IOError('Could not fit string into image. Max char count is too large for given image width.')
+                continue
+            else:
+                bTooLong = False
+
+        # teach the RNN translational invariance by
+        # fitting text box randomly on canvas, with some room to rotate
+        max_shift_x = w - box[2] - border_w_h[0]
+        max_shift_y = h - box[3] - border_w_h[1]
+        top_left_x = np.random.randint(0, int(max_shift_x))
+        if ud:
+            top_left_y = np.random.randint(0, int(max_shift_y))
+        else:
+            top_left_y = h // 2
+        context.move_to(top_left_x - int(box[0]), top_left_y - int(box[1]))
+        intensity = np.random.uniform(low=0.7, high=1.0)    # background greyscale intensity
+        context.set_source_rgb(intensity, intensity, intensity)   # Background colors in BGR order, values from 0 to 1
+        context.show_text(text)
+
+    buf = surface.get_data()
+    a = np.frombuffer(buf, np.uint8)
+    a.shape = (h, w, 4) # red, green, blue, alpha
+    a = a[:, :, 0]  # grab single channel
+
+    a = a.astype(np.float32) / 255
+    a = np.expand_dims(a, 0)
+
+    if rotate:
+        # a = image.random_rotation(a, 3 * (w - top_left_x) / w + 1)
+        a = image.random_rotation(a, 1 * (w - top_left_x) / w + 1)
+    a = speckle(a)
+
+    ## Randomly choose polarity of image
+    if np.random.uniform() > 0.5:
+        a = 1. - a
+
+    ## Set areas to left and right of the text to zeros
+    a[0,:,:top_left_x] = 0.5
+    a[0,:,top_left_x+int(round(box[2])):] = 0.5
+    ## Shift text to far right or left of image
+    a = np.roll(a, -top_left_x, axis=2)
+    # a = np.roll(a, w - (top_left_x+int(round(box[2]))), axis=2)
+
+    return a
+
+
+def shuffle_mats_or_lists(matrix_list, stop_ind=None):
+    ret = []
+    assert all([len(i) == len(matrix_list[0]) for i in matrix_list])
+    len_val = len(matrix_list[0])
+    if stop_ind is None:
+        stop_ind = len_val
+    assert stop_ind <= len_val
+
+    a = range(stop_ind)
+    np.random.shuffle(a)
+    a += range(stop_ind, len_val)
+    for mat in matrix_list:
+        if isinstance(mat, np.ndarray):
+            ret.append(mat[a])
+        elif isinstance(mat, list):
+            ret.append([mat[i] for i in a])
+        else:
+            raise TypeError('shuffle_mats_or_lists only supports '
+                            'numpy.array and list objects')
+    return ret
+
+
+def digits_to_labels(text):
+    ret = [10]  # 10 is a "character break" label. putting one on either side of each character
+    for char in text:
+        if char >= '0' and char <= '9':
+            ret.append(ord(char) - ord('0'))
+            ret.append(10)
+        else:
+            sys.exit('Unexpected non-numberic char in string input to digits_to_labels().')
+    return ret
+
+
+# only a-z and space..probably not to difficult
+# to expand to uppercase and symbols
+
+def is_valid_str(in_str):
+    search = re.compile(r'[^a-z\ ]').search
+    return not bool(search(in_str))
+
+
+# the actual loss calc occurs here despite it not being
+# an internal Keras loss function
+
+def ctc_lambda_func(args):
+    y_pred, labels, input_length, label_length = args
+    # the 2 is critical here since the first couple outputs of the RNN
+    # tend to be garbage:
+    y_pred = y_pred[:, 2:, :]
+    return K.ctc_batch_cost(labels, y_pred, input_length, label_length)
+
+# Uses generator functions to supply train/test with
+# data. Image renderings are text are created on the fly
+# each time with random perturbations
+
+class TextImageGenerator(keras.callbacks.Callback):
+
+    def __init__(self, monogram_file, bigram_file, minibatch_size,
+                 img_w, img_h, downsample_factor, val_split,
+                 absolute_max_string_len=16):
+
+        self.minibatch_size = minibatch_size
+        self.img_w = img_w
+        self.img_h = img_h
+        self.monogram_file = monogram_file
+        self.bigram_file = bigram_file
+        self.downsample_factor = downsample_factor
+        self.val_split = val_split
+        self.blank_label = self.get_output_size() - 1
+        self.absolute_max_string_len = absolute_max_string_len
+
+    def get_output_size(self):
+        return 28
+
+    # num_words can be independent of the epoch size due to the use of generators
+    # as max_string_len grows, num_words can grow
+    def build_word_list(self, num_words, max_string_len=None, mono_fraction=0.5):
+        assert max_string_len <= self.absolute_max_string_len
+        assert num_words % self.minibatch_size == 0
+        assert (self.val_split * num_words) % self.minibatch_size == 0
+        self.num_words = num_words
+        self.string_list = [''] * self.num_words
+        tmp_string_list = []
+        self.max_string_len = max_string_len
+        self.Y_data = np.ones([self.num_words, self.absolute_max_string_len]) * -1
+        self.X_text = []
+        self.Y_len = [0] * self.num_words
+
+        # monogram file is sorted by frequency in english speech
+        with open(self.monogram_file, 'rt') as f:
+            for line in f:
+                if len(tmp_string_list) == int(self.num_words * mono_fraction):
+                    break
+                word = line.rstrip()
+                if max_string_len == -1 or max_string_len is None or len(word) <= max_string_len:
+                    tmp_string_list.append(word)
+
+        # bigram file contains common word pairings in english speech
+        with open(self.bigram_file, 'rt') as f:
+            lines = f.readlines()
+            for line in lines:
+                if len(tmp_string_list) == self.num_words:
+                    break
+                columns = line.lower().split()
+                word = columns[0] + ' ' + columns[1]
+                if is_valid_str(word) and \
+                        (max_string_len == -1 or max_string_len is None or len(word) <= max_string_len):
+                    tmp_string_list.append(word)
+        if len(tmp_string_list) != self.num_words:
+            raise IOError('Could not pull enough words from supplied monogram and bigram files. ')
+        # interlace to mix up the easy and hard words
+        self.string_list[::2] = tmp_string_list[:self.num_words // 2]
+        self.string_list[1::2] = tmp_string_list[self.num_words // 2:]
+
+        for i, word in enumerate(self.string_list):
+            self.Y_len[i] = len(word)
+            self.Y_data[i, 0:len(word)] = text_to_labels(word, self.get_output_size())
+            self.X_text.append(word)
+        self.Y_len = np.expand_dims(np.array(self.Y_len), 1)
+
+        self.cur_val_index = self.val_split
+        self.cur_train_index = 0
+
+    # each time an image is requested from train/val/test, a new random
+    # painting of the text is performed
+    def get_batch(self, index, size, train):
+        # width and height are backwards from typical Keras convention
+        # because width is the time dimension when it gets fed into the RNN
+        if K.image_data_format() == 'channels_first':
+            X_data = np.ones([size, 1, self.img_w, self.img_h])
+        else:
+            X_data = np.ones([size, self.img_w, self.img_h, 1])
+
+        labels = np.ones([size, self.absolute_max_string_len])
+        input_length = np.zeros([size, 1])
+        label_length = np.zeros([size, 1])
+        source_str = []
+        for i in range(0, size):
+            # Mix in some blank inputs.  This seems to be important for
+            # achieving translational invariance
+            if train and i > size - 4:
+                if K.image_data_format() == 'channels_first':
+                    X_data[i, 0, 0:self.img_w, :] = self.paint_func('')[0, :, :].T
+                else:
+                    X_data[i, 0:self.img_w, :, 0] = self.paint_func('',)[0, :, :].T
+                labels[i, 0] = self.blank_label
+                input_length[i] = self.img_w // self.downsample_factor - 2
+                label_length[i] = 1
+                source_str.append('')
+            else:
+                if K.image_data_format() == 'channels_first':
+                    X_data[i, 0, 0:self.img_w, :] = self.paint_func(self.X_text[index + i])[0, :, :].T
+                else:
+                    X_data[i, 0:self.img_w, :, 0] = self.paint_func(self.X_text[index + i])[0, :, :].T
+                labels[i, :] = self.Y_data[index + i]
+                input_length[i] = self.img_w // self.downsample_factor - 2
+                label_length[i] = self.Y_len[index + i]
+                source_str.append(self.X_text[index + i])
+        inputs = {'the_input': X_data,
+                  'the_labels': labels,
+                  'input_length': input_length,
+                  'label_length': label_length,
+                  'source_str': source_str  # used for visualization only
+                  }
+        outputs = {'ctc': np.zeros([size])}  # dummy data for dummy loss function
+        return (inputs, outputs)
+
+    def next_train(self):
+        while 1:
+            ret = self.get_batch(self.cur_train_index, self.minibatch_size, train=True)
+            self.cur_train_index += self.minibatch_size
+            if self.cur_train_index >= self.val_split:
+                self.cur_train_index = self.cur_train_index % 32
+                (self.X_text, self.Y_data, self.Y_len) = shuffle_mats_or_lists(
+                    [self.X_text, self.Y_data, self.Y_len], self.val_split)
+            yield ret
+
+    def next_val(self):
+        while 1:
+            ret = self.get_batch(self.cur_val_index, self.minibatch_size, train=False)
+            self.cur_val_index += self.minibatch_size
+            if self.cur_val_index >= self.num_words:
+                self.cur_val_index = self.val_split + self.cur_val_index % 32
+            yield ret
+
+    def on_train_begin(self, logs={}):
+        # self.build_word_list(16000, 4, 1)
+        self.build_word_list(1600, 4, 1)
+        self.paint_func = lambda text: paint_text(text, self.img_w, self.img_h,
+                                                  rotate=False, ud=False, multi_fonts=False)
+
+    def on_epoch_begin(self, epoch, logs={}):
+        # rebind the paint function to implement curriculum learning
+        if epoch >= 3 and epoch < 6:
+            self.paint_func = lambda text: paint_text(text, self.img_w, self.img_h,
+                                                      rotate=False, ud=True, multi_fonts=False)
+        elif epoch >= 6 and epoch < 9:
+            self.paint_func = lambda text: paint_text(text, self.img_w, self.img_h,
+                                                      rotate=False, ud=True, multi_fonts=True)
+        elif epoch >= 9:
+            self.paint_func = lambda text: paint_text(text, self.img_w, self.img_h,
+                                                      rotate=True, ud=True, multi_fonts=True)
+        if epoch >= 21 and self.max_string_len < 12:
+            # self.build_word_list(32000, 12, 0.5)
+            self.build_word_list(3200, 12, 0.5)
+
+#-------------------------------------------------------------------------
+
+def chars_to_onehot(data):
+    nSeqLength = data.shape[0]
+    ref = np.sort(np.asarray([c for c in ' 0123456789']))
+    nClasses = len(ref)
+    ix = np.searchsorted(ref,data)
+    onehot = np.zeros((nSeqLength, nClasses))
+    onehot[np.arange(nSeqLength), ix] = 1
+    return onehot
+
+#-------------------------------------------------------------------------
+
+def get_data_pos(nSamples, inputSeqLen):
+    # Build text with DOT numbers
+    # Variability includes
+    #   1. Use of - or # between "DOT" and the number
+    #   2. Addition of extra spaces in between DOT and number
+    #   3. Possible extra text before "DOT 12454"
+    #   4. Possible extra text after "DOT 12454"
+    #   5. Number of digits in dot number
+    minNumLength = 4 #5   # maximum number of digits in DOT number, e.g., 12345
+    maxNumLength = 8    # maximum number of digits in DOT number, e.g., 12345678
+    maxPreText = 0 #5
+    maxPostText = 0 #10
+    # maxTotalLength = maxPreText + 1 + 3 + 3 + maxNumLength + 1 + maxPostText # 1,3,3,1 --> space, 'DOT', space, [space,-/#,space], space
+    maxTotalLength = maxPreText + 1 + 3 + 3 + maxNumLength + 1 + maxPostText # 1,3,3,1 --> space, 'US DOT', space, [space,-/#,space], space
+    print("Max input string length = " + str(maxTotalLength))
+    pix_height = 32
+    pix_width = 16 * maxTotalLength
+    data = np.zeros((nSamples, pix_height, pix_width, 1))  # Input data is (samples, height_pixels, width_pixes, channels)
+    dotnumbers = []
+    textlines = []
+
+    # Do some of the stochastic stuff first.
+    nDigits = np.random.randint(minNumLength,maxNumLength+1, nSamples)
+    nPreText = np.random.randint(0,maxPreText+1, nSamples)
+    nPostText = np.random.randint(0,maxPostText+1, nSamples)
+    dotText = np.random.choice(['DOT','USDOT','US DOT'], nSamples)
+
+    preMidSpace = np.random.choice((' ',''), nSamples).tolist()
+    midChar = np.random.choice(('-','#',''), nSamples).tolist()
+    postMidSpace = np.random.choice((' ',''), nSamples).tolist()
+
+    # Get list of all printable ASCII printable characters (int 32 to 126)
+    printables = []
+    for i in range(32,127):
+        printables.append(str(unichr(i)))
+
+    digit_array = ('0','1','2','3','4','5','6','7','8','9')
+    nClasses = len(digit_array)
+
+    # inputSeqLen = 32    # 32 is width after convolution and pooling layers.  Need to pass in as an argument.
+    labels = 11*np.ones([nSamples, maxNumLength*2+1])   # 11 is the space/null class
+    input_length = np.zeros([nSamples, 1])
+    label_length = np.zeros([nSamples, 1])
+
+    for i in range(nSamples):
+        preText = np.random.choice((printables), nPreText[i])
+        if len(preText)>0:
+            preText = np.append(preText,[' '])
+        preText = preText.tostring()
+
+        postText = np.random.choice(printables, nPostText[i])
+        if len(postText)>0:
+            postText = np.concatenate(([' '],postText))
+        postText = postText.tostring()
+
+        digits = np.random.choice(digit_array, nDigits[i])
+        digits = digits.tostring()
+        dotnumbers.append(digits)
+
+        fullstring = preText + dotText[i] + preMidSpace[i] + midChar[i] + postMidSpace[i] + digits + postText
+        # fullstring = preText + ' ' + dotText[i] + preMidSpace[i] + midChar[i] + postMidSpace[i] + digits + ' ' + postText   # paint_text is cropping out pre and post space padding
+        # fullstring = (' ' * (maxTotalLength-len(fullstring))) + fullstring    # prepad with spaces
+        fullstring = fullstring + (' ' * (maxTotalLength-len(fullstring)))    # postpad with spaces
+
+        textlines.append(fullstring)
+
+        im = paint_text(fullstring, pix_width, pix_height, rotate=True, ud=True, multi_fonts=True)
+        data[i,:,:,0] = im
+
+        labels[i, 0:(nDigits[i]*2+1)] = digits_to_labels(digits)
+        input_length[i] = inputSeqLen - 2   # first two not used for loss function.  Or is this not image width? NOT CLEAR.
+        label_length[i] = nDigits[i]*2+1
+
+    return data, labels, input_length, label_length, textlines, dotnumbers, maxTotalLength
+
+#-------------------------------------------------------------------------
+
+def get_data_neg(nSamples, maxInputLength, maxOutputLen, inputSeqLen):
+    pix_height = 32
+    pix_width = 16 * maxInputLength
+
+    # data = np.zeros((nSamples, maxInputLength, 7))  # Input data is ASCII, thus 7 bits, 7 input nodes
+    data = np.zeros((nSamples, pix_height, pix_width, 1))  # Input data is (samples, height_pixels, width_pixes, channels)
+    textlines = []
+
+    # Get list of all printable ASCII printable characters (int 32 to 126)
+    printables = []
+    for i in range(32,127):
+        printables.append(str(unichr(i)))
+
+    nText = np.random.randint(0,maxInputLength+1, nSamples)
+
+    inputSeqLen = 32    # 32 is image width after convolution and pooling layers.  Need to pass in as an argument.
+    input_length = np.zeros([nSamples, 1])
+    label_length = np.zeros([nSamples, 1])
+
+    for i in range(nSamples):
+        fullstring = np.random.choice((printables), nText[i])
+        fullstring = fullstring.tostring()
+        # fullstring = ' ' * (maxInputLength-len(fullstring)) + fullstring        # prepad with spaces
+        fullstring = fullstring + (' ' * (maxInputLength-len(fullstring)))        # postpad with spaces
+
+        textlines.append(fullstring)
+
+        im = paint_text(fullstring, pix_width, pix_height, rotate=True, ud=True, multi_fonts=True)
+        data[i,:,:,0] = im
+
+    maxNumLength = 8    # maximum number of digits in DOT number, e.g., 12345678.  Need to pass in as an argument.
+    labels = 11*np.ones((nSamples,maxNumLength*2+1))   # label 11 is the 'nothing/blank' label
+    label_length = np.ones((nSamples,1))
+    input_length = np.ones((nSamples,1)) * (inputSeqLen - 2)   # first two not used for loss function.  Or is this not image width? NOT CLEAR.
+
+    return data, labels, input_length, label_length, textlines
+
+#-------------------------------------------------------------------------
+
+##=============================================================
+## Create the training and testing data
+##=============================================================
+
+## Data array dimension ordering is (samples, sequence_length, input_nodes).
+epochs = 200
+BATCH_SIZE = 32
+nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+nNeg = int((BATCH_SIZE-14) / BATCH_SIZE) * BATCH_SIZE
+bInvertSeq = False
+
+print('\nBuilding training data set...')
+dataPos, labelsPos, inputLengthPos, labelLengthPos, lineStringsPos, dotStringsPos, maxInputStringLength = get_data_pos(nPos, 64)
+dataPos = np.transpose(dataPos,(0,2,1,3))
+dataPos = np.flip(dataPos, axis=2)
+
+print('Building validation data set...')
+dataNeg, labelsNeg, inputLengthNeg, labelLengthNeg, lineStringsNeg = get_data_neg(nNeg, maxInputStringLength, 8, 64)
+dataNeg = np.transpose(dataNeg,(0,2,1,3))
+dataNeg = np.flip(dataNeg, axis=2)
+
+if bInvertSeq:
+    dataPos = np.flip(dataPos, axis=1)
+    dataNeg = np.flip(dataNeg, axis=1)
+
+# ## Display some images
+# plt.figure(1)
+# for i in range(10):
+#     # plt.subplot(1,n,i+1)
+#     plt.imshow(np.squeeze(np.transpose(dataPos,(0,2,1,3))[i,:,:,0]), cmap='Greys', vmin=0., vmax=1.)
+#     plt.imshow(np.squeeze(np.transpose(dataNeg,(0,2,1,3))[i,:,:,0]), cmap='Greys', vmin=0., vmax=1.)
+#     # plt.colorbar()
+#     plt.show()
+#     plt.title(str(i) + " of " + str(nPos))
+#     raw_input("Press Enter to continue...")
+
+dataAll = np.concatenate((dataPos, dataNeg))
+labelsAll = np.concatenate((labelsPos, labelsNeg))
+inputLengthAll = np.concatenate((inputLengthPos, inputLengthNeg))
+labelLengthAll = np.concatenate((labelLengthPos, labelLengthNeg))
+lineStringsAll = lineStringsPos + lineStringsNeg
+
+## Shuffle data
+indices = np.arange(len(dataAll))
+np.random.shuffle(indices)
+dataAll = dataAll[indices]
+labelsAll = labelsAll[indices]
+inputLengthAll = inputLengthAll[indices]
+labelLengthAll = labelLengthAll[indices]
+lineStringsAll = [lineStringsAll[i] for i in indices]
+
+# ## Add noise to data
+# noiseMag = 0.5;
+# dataAll += np.random.uniform(-noiseMag,noiseMag,dataAll.shape)
+
+## Split into train and validation sets
+percentTrain = 80
+split_at = int( len(dataAll) * percentTrain/100)
+# split_at = len(dataAll)-(BATCH_SIZE-14)
+(dataTrain, dataVal) = dataAll[:split_at], dataAll[split_at:]
+(labelsTrain, labelsVal) = labelsAll[:split_at], labelsAll[split_at:]
+(inputLengthTrain, inputLengthVal) = inputLengthAll[:split_at], inputLengthAll[split_at:]
+(labelLengthTrain, labelLengthVal) = labelLengthAll[:split_at], labelLengthAll[split_at:]
+(lineStringsTrain, lineStringsVal) = lineStringsAll[:split_at], lineStringsAll[split_at:]
+nTrain = len(dataTrain)
+nVal = len(dataVal)
+
+print('\nTraining data and label array shapes:')
+print(dataTrain.shape)
+print(labelsTrain.shape)
+
+print('\nValidation data and label array shapes:')
+print(dataVal.shape)
+print(labelsVal.shape)
+
+
+## Load real data
+dataDict = pickle.load(open('/home/mroos/Data/dotreader/dot_annotations/data_dot_image_stack.pkl','rb'))
+dataReal = np.transpose(dataDict['stack'],(0,2,1,3))
+dataReal = np.flip(dataReal, axis=2)
+if bInvertSeq:
+    dataReal = np.flip(dataReal, axis=1)
+labelsReal = dataDict['labels_onehot']
+lineStringsReal = dataDict['labels_string']
+del dataDict
+
+## Compute histogram of real DOT numbers. Use numbers that only occur once as the validation data.
+lineStringsUnique = list(set(lineStringsReal))
+lineStringsUnique.sort()
+cnts = [lineStringsReal.count(s) for s in lineStringsUnique]
+ixTrainUnique = [ix for ix,val in enumerate(cnts) if val>1]
+ixValUnique = [ix for ix,val in enumerate(cnts) if val==1]
+
+lineStringsUniqueTrain = [lineStringsUnique[i] for i in ixTrainUnique]
+lineStringsUniqueVal = [lineStringsUnique[i] for i in ixValUnique]
+
+ixTrainReal = [ix for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueTrain]
+ixValReal = [ix for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueVal]
+
+lineStringsRealTrain = [val for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueTrain]
+lineStringsRealVal = [val for ix,val in enumerate(lineStringsReal) if val in lineStringsUniqueVal]
+
+## Add real data to synthetic data
+dataTrain = np.concatenate((dataTrain, dataReal[ixTrainReal]))
+dataVal = np.concatenate((dataVal, dataReal[ixValReal]))
+labelsTrain = np.concatenate((labelsTrain, labelsReal[ixTrainReal]))
+labelsVal = np.concatenate((labelsVal, labelsReal[ixValReal]))
+lineStringsTrain = lineStringsTrain + lineStringsRealTrain
+lineStringsVal = lineStringsVal + lineStringsRealVal
+del dataReal, labelsReal, lineStringsReal
+
+
+## Shuffle training data
+indices = np.arange(len(dataTrain))
+np.random.shuffle(indices)
+dataTrain = dataTrain[indices]
+labelsTrain = labelsTrain[indices]
+lineStringsTrain = [lineStringsTrain[i] for i in indices]
+
+
+## Build the model....
+nKernSize = 3
+# nFilters = (8, 16, 32)
+nFilters = (8, 16)
+nConvLayers = len(nFilters)
+nRows = 32
+nCols = nRows*2
+nChan = 1
+
+RNN = layers.GRU   # Try LSTM, GRU, or SimpleRNN
+# HIDDEN_SIZE = 256
+HIDDEN_SIZE = 512
+DECODE_LAYERS = 1
+
+
+## Build the model
+startEpoch = 0
+print('\nBuilding the model...')
+input_data = layers.Input(name='the_input', shape=dataAll.shape[1:], dtype='float32')
+inner = layers.normalization.BatchNormalization(input_shape=dataAll.shape[1:], name='batchnorm1')(input_data)
+for i in range(nConvLayers-1):
+    inner = layers.convolutional.Conv2D(nFilters[i],
+                                            nKernSize,
+                                            strides=(1, 1),
+                                            padding='same',
+                                            data_format='channels_last',
+                                            dilation_rate=(1, 1),
+                                            activation=None,
+                                            use_bias=True,
+                                            kernel_initializer='glorot_uniform',
+                                            bias_initializer='zeros',
+                                            kernel_regularizer=None,
+                                            bias_regularizer=None,
+                                            activity_regularizer=None,
+                                            kernel_constraint=None,
+                                            bias_constraint=None,
+                                            input_shape=dataAll.shape[1:],
+                                            name='conv'+str(i+1))(inner)
+    inner = layers.pooling.MaxPooling2D(pool_size=(2, 2), data_format='channels_last', name='max'+str(i+1))(inner)
+    inner = layers.normalization.BatchNormalization(input_shape=dataAll.shape[1:], name='batchnorm'+str(i+2))(inner)
+inner = layers.convolutional.Conv2D(nFilters[-1],
+                                        nKernSize,
+                                        strides=(1, 1),
+                                        padding='same',
+                                        data_format='channels_last',
+                                        dilation_rate=(1, 1),
+                                        activation=None,
+                                        use_bias=True,
+                                        kernel_initializer='glorot_uniform',
+                                        bias_initializer='zeros',
+                                        kernel_regularizer=None,
+                                        bias_regularizer=None,
+                                        activity_regularizer=None,
+                                        kernel_constraint=None,
+                                        bias_constraint=None,
+                                        input_shape=dataAll.shape[1:],
+                                        name='conv'+str(nConvLayers))(inner)
+inner = layers.pooling.MaxPooling2D(pool_size=(2, 2), data_format='channels_last', name='max'+str(nConvLayers))(inner)
+
+
+# Reshape, converting columns to timesteps....
+#   (batch_size, timesteps/cols, rows)
+# Need to flip the input images such that space-to-sequence conversion it top-bottom rather than left-right,
+# due to way the layers.core.Reshape works.  Or build a transpose layer/operation?
+inputSeqLen = dataAll.shape[1] / 2**nConvLayers
+rnnInputDim = dataAll.shape[2] / 2**nConvLayers * nFilters[-1]
+inner = layers.core.Reshape(target_shape=(inputSeqLen, rnnInputDim), name='reshape')(inner)
+
+# Dropout layer
+inner_do = layers.core.Dropout(0.25, seed=seed, name='dropout')(inner)
+
+
+# # "Encode" the input sequence using an RNN, producing an output of HIDDEN_SIZE.
+# # Note: In a situation where your input sequences have a variable length,
+# # use input_shape=(None, num_feature).
+# rnn = RNN(HIDDEN_SIZE,
+#           input_shape=(inputSeqLen, rnnInputDim),
+#           return_sequences=False,
+#           activation='relu',     # tanh is the default (documentation wrongly says it's linear)
+#           unroll=False,         # processing is faster if unroll==True, but requires more memory. Also may need to be True to avoid a theano bug
+#           name='rnn_encode')(inner)
+
+# # The decoder RNN could be multiple layers stacked or a single layer.
+# for i in range(DECODE_LAYERS):
+#     # By setting return_sequences to True, return not only the last output but
+#     # all the outputs so far in the form of (num_samples, timesteps,
+#     # output_dim). This is necessary as TimeDistributed in the below expects
+#     # the first dimension to be the timesteps.
+#     rnn = RNN(HIDDEN_SIZE,
+#               # activation='tanh',
+#               activation='relu',     # tanh is the default (documentation wrongly says it's linear)
+#               return_sequences=True,
+#               name='rnn_decode'+str(i+1))(rnn)
+
+# # Apply a dense layer to the every temporal slice of an input. For each of step
+# # of the output sequence, decide which character should be chosen.
+# outer = layers.TimeDistributed(layers.Dense(11))(rnn) # 11 outputs, for one-hot ' 0123456789'
+
+# Two layers of bidirecitonal RNNs
+# gru_1 = RNN(HIDDEN_SIZE, return_sequences=True, kernel_initializer='he_normal', name='gru1')(inner)
+# gru_1b = RNN(HIDDEN_SIZE, return_sequences=True, go_backwards=True, kernel_initializer='he_normal', name='gru1_b')(inner)
+# gru1_merged = add([gru_1, gru_1b])
+# gru_2 = RNN(HIDDEN_SIZE, return_sequences=True, kernel_initializer='he_normal', name='gru2')(gru1_merged)
+# gru_2b = RNN(HIDDEN_SIZE, return_sequences=True, go_backwards=True, kernel_initializer='he_normal', name='gru2_b')(gru1_merged)
+gru1 = RNN(HIDDEN_SIZE, return_sequences=True, kernel_initializer='he_normal', name='gru1')(inner_do)
+gru_do = layers.core.Dropout(0.25, seed=seed, name='gru_dropout')(gru1)
+gru2 = RNN(HIDDEN_SIZE, return_sequences=True, kernel_initializer='he_normal', name='gru2')(gru_do)
+
+# transforms RNN output to character activations:
+# outer = Dense(11, kernel_initializer='he_normal',
+#               name='dense2')(concatenate([gru_2, gru_2b]))
+outer = Dense(12, kernel_initializer='he_normal',   # 12 classes: 0-9, 10==char break, 11=blank/nothing
+              name='dense')(gru2)
+
+y_pred = layers.Activation('softmax', name='softmax')(outer)
+Model(inputs=input_data, outputs=y_pred).summary()
+
+
+## Load existing (best) model if desired
+bUseSavedModel = False
+if bUseSavedModel:
+    model = model_from_json(open('model_dotnum_epoch200_seed9918_usdot_synth_ctc_arch.json').read())
+    model.load_weights('model_dotnum_epoch200_seed9918_usdot_synth_ctc_weights.h5')
+    # model = model_from_json(open('model_dotnum_epoch075_seed0127_usdot_real_arch.json').read())
+    # model.load_weights('model_dotnum_epoch075_seed0127_usdot_real_weights.h5')
+    startEpoch = 99  # 0 indexed?
+
+
+# labels = Input(name='the_labels', shape=[8], dtype='float32')
+labels = Input(name='the_labels', shape=[17], dtype='float32')  # up to 8 dot digits, plus char break on either size = 17 total
+input_length = Input(name='input_length', shape=[1], dtype='int64')
+label_length = Input(name='label_length', shape=[1], dtype='int64')
+# Keras doesn't currently support loss funcs with extra parameters
+# so CTC loss is implemented in a lambda layer
+loss_out = Lambda(ctc_lambda_func, output_shape=(1,), name='ctc')([y_pred, labels, input_length, label_length])
+
+# clipnorm seems to speeds up convergence
+# sgd = keras.optimizers.SGD(lr=0.02, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=5)
+adam = keras.optimizers.Adam(lr=0.0001)
+
+# model = Model(inputs=[input_data, labels, input_length, label_length], outputs=loss_out)
+model = Model(inputs=[input_data, labels, input_length, label_length], outputs=[y_pred, loss_out])
+
+# the loss calc occurs elsewhere, so use a dummy lambda func for the loss
+start = time.time()
+# model.compile(loss={'ctc': lambda y_true, y_pred: y_pred}, optimizer=sgd)
+model.compile(loss={'ctc': lambda y_true, y_pred: y_pred}, optimizer=adam)
+end = time.time()
+print("\tDone: " + str(end - start) + "seconds")
+
+
+## Train the model
+# Save the model architecture
+basename = 'epoch{:03d}_seed'.format(epochs) + '{:04d}'.format(seed) + '_usdot_synth_ctc'
+# basename = 'epoch{:03d}_seed'.format(epochs) + '{:04d}'.format(seed) + '_usdot_real_ctc'
+json_string = model.to_json()
+filename_model_arch = 'model_dotnum_' + basename + '_arch.json'
+open(filename_model_arch, 'w').write(json_string)
+
+# history = History()
+callbacks = [History()]
+filename_model_weights = 'model_dotnum_' + basename + '_weights.h5'   # where weights will be saved
+callbacks.append(ModelCheckpoint(filepath=filename_model_weights, monitor='val_loss', save_best_only=True))
+
+inTrain = {'the_input': dataTrain,
+          'the_labels': labelsTrain,
+          'input_length': inputLengthTrain,
+          'label_length': labelLengthTrain,
+          'source_str': lineStringsTrain  # used for visualization only
+          }
+outTrain = {'ctc': np.zeros([len(dataTrain)])}  # dummy data for dummy loss function
+inVal = {'the_input': dataVal,
+          'the_labels': labelsVal,
+          'input_length': inputLengthVal,
+          'label_length': labelLengthVal,
+          'source_str': lineStringsVal  # used for visualization only
+          }
+outVal = {'ctc': np.zeros([len(dataVal)])}  # dummy data for dummy loss function
+
+
+print('\nTraining the model...')
+start = time.time()
+# model.fit(dataTrain, labelsTrain, batch_size=BATCH_SIZE, epochs=epochs, verbose=1, callbacks=callbacks, validation_split=0.0, validation_data=(dataVal, labelsVal), shuffle=True, class_weight=None, sample_weight=None, initial_epoch=startEpoch)
+model.fit(inTrain, outTrain, batch_size=BATCH_SIZE, epochs=epochs, verbose=1, callbacks=callbacks,
+          validation_split=0.0, validation_data=(inVal, outVal), shuffle=True, class_weight=None,
+          sample_weight=None, initial_epoch=startEpoch)
+end = time.time()
+print("\nTotal training duration: " + str((end - start)/60) + " minutes.")
+
+
+history = callbacks[0]
+# # list all data in history
+# print(history.history.keys())
+
+# ## Save the model architecture and weights
+# basename = 'epoch{:03d}_seed'.format(epochs) + '{:04d}'.format(seed) + '_usdot_real'
+# json_string = model.to_json()
+# open('model_dotnum_' + basename + '_arch.json', 'w').write(json_string)
+# model.save_weights('model_dotnum_' + basename + '_weights.h5')
+
+
+## Save loss and accuracy values
+# a = {'acc': history.history['acc'], 'val_acc': history.history['val_acc'], 'loss': history.history['loss'], 'val_loss': history.history['val_loss']}
+a = {'loss': history.history['loss'], 'val_loss': history.history['val_loss']}
+with open('results_' + basename + '.pkl', 'wb') as handle:
+    pickle.dump(a, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+plt.figure(1)
+
+# # Plot accuracy training history
+# plt.subplot(1,2,1)
+# plt.plot(history.history['acc'])
+# plt.plot(history.history['val_acc'])
+# plt.title('model accuracy')
+# plt.ylabel('accuracy')
+# plt.xlabel('epoch')
+# plt.legend(['train', 'test'], loc='upper left')
+
+# Plot loss training history
+plt.subplot(1,2,2)
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+
+plt.show()
+
+
+
+## Prediction
+model_pred = Model(inputs=input_data, outputs=y_pred)
+model_pred = model_from_json(open(filename_model_arch).read())
+model_pred.load_weights(filename_model_weights)
+
+
+## Make predictions on validation set
+print('Making predictions on validation set...')
+# TODO: Time the predictions.  Run it twice.  Faster the second time?  Is there compilation happening the first time?
+# labelsValPred = model.predict(dataVal, batch_size=BATCH_SIZE, verbose=1)
+# labelsTrainPred = model.predict(dataTrain, batch_size=BATCH_SIZE, verbose=1)
+softmaxTrain, lossTrain = model_pred.predict(inTrain, batch_size=BATCH_SIZE, verbose=1)
+softmaxVal, lossVal = model_pred.predict(inVal, batch_size=BATCH_SIZE, verbose=1)
+
+print('Training prediction loss = ' + str(np.mean(np.asarray(lossTrain))))
+print('Validation prediction loss = ' + str(np.mean(np.asarray(lossVal))))
+
+plt.figure(2)
+for ix in range(len(dataVal)):
+
+    plt.clf()
+
+    plt.subplot(2,2,1)
+    plt.imshow(np.transpose(dataTrain[ix,:,:,0],(1,0)))
+
+    plt.subplot(2,2,2)
+    plt.imshow(np.transpose(softmaxTrain[ix,:,:],(1,0)))
+    plt.clim(0,1)
+    plt.title('Train: "' + lineStringsTrain[ix] + '" loss: ' + str(lossTrain[ix]))
+
+    plt.subplot(2,2,3)
+    plt.imshow(np.transpose(dataVal[ix,:,:,0],(1,0)))
+
+    plt.subplot(2,2,4)
+    plt.imshow(np.transpose(softmaxVal[ix,:,:],(1,0)))
+    plt.clim(0,1)
+    plt.title('Val: "' + lineStringsVal[ix] + '" loss: ' + str(lossVal[ix]))
+
+    # plt.subplot(2,2,3)
+    # plt.imshow(labelsTrain[ix])
+    # plt.clim(0,1)
+    # plt.title(lineStringsTrain[ix])
+    # plt.colorbar()
+
+    # plt.subplot(2,2,4)
+    # plt.imshow(labelsTrainPred[ix])
+    # plt.clim(0,1)
+    # plt.title(lineStringsTrain[ix])
+    # plt.colorbar()
+
+    plt.show()
+    plt.waitforbuttonpress()

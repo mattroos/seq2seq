@@ -1,0 +1,380 @@
+Log of results of models trained with dotnum_image_ctc.py
+======================================================
+
+=================
+model_dotnum_epoch400_seed7794_usdot_synth_ctc_arch.json
+model_dotnum_epoch400_seed7794_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+	nFilters = (8, 16, 32)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+	HIDDEN_SIZE = 256
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+	optimizer = sgd = keras.optimizers.SGD(lr=0.02, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=5)
+
+	1. 400 epochs with seed=7794
+
+	val_loss = 4.1035
+
+	Comments:
+	Getting close to success, but still making good number of errors.  Seems to frequently get the final digit wrong.
+
+
+=================
+model_dotnum_epoch200_seed9918_usdot_synth_ctc_arch.json
+model_dotnum_epoch200_seed9918_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+	nFilters = (8, 16)	***
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+	HIDDEN_SIZE = 256
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+	optimizer = sgd = keras.optimizers.SGD(lr=0.02, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=5)
+
+	1. 200 epochs with seed=9918
+
+	val_loss = 10.1965
+
+	Comments:
+	Bad results.  Wasn't converging well.
+
+
+=================
+model_dotnum_epoch100_seed6314_usdot_synth_ctc_arch.json
+model_dotnum_epoch100_seed6314_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+	nFilters = (8, 16)	***
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+	HIDDEN_SIZE = 512	***
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+	optimizer = sgd = keras.optimizers.SGD(lr=0.02, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=5)
+
+	1. 100 epochs with seed=6314
+
+	val_loss = 1.1260, after epoch 3!
+
+	Comments:
+	Best so far.  Pretty good.
+
+
+=================
+model_dotnum_epoch100_seed9001_usdot_synth_ctc_arch.json
+model_dotnum_epoch100_seed9001_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+	nFilters = (8, 16)	***
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+	HIDDEN_SIZE = 512	***
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+	optimizer = sgd = keras.optimizers.SGD(lr=0.02, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=5)
+	dropout 0.5 layer after reshape layer  ***
+
+	1. 100 epochs with seed=9001
+
+	loss = 2.3368
+	val_loss = 3.7790
+
+	Comments:
+	Train/test loss curve looks good (continuous downtrend).  Longer training may help.  Or lower dropout rate.
+	Performance ok, not great, after 100 epochs.
+
+
+=================
+model_dotnum_epoch100_seed9446_usdot_synth_ctc_arch.json
+model_dotnum_epoch100_seed9446_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+	nFilters = (8, 16)	***
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+	HIDDEN_SIZE = 512	***
+
+	Relu activation ***
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+	optimizer = sgd = keras.optimizers.SGD(lr=0.02, decay=1e-6, momentum=0.9, nesterov=True, clipnorm=5)
+	dropout 0.5 layer after reshape layer  ***
+
+	1. 100 epochs with seed=
+
+	loss = 
+	val_loss = 
+
+	Comments:
+	Wild behavior w/r/t loss. Lots of big positive jumps, not consistently trending down.
+
+
+=================
+model_dotnum_epoch200_seed4966_usdot_synth_ctc_arch.json
+model_dotnum_epoch200_seed4966_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+***	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 512
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+***	optimizer = Adam
+
+	1. 200 epochs with seed=4966
+
+	loss = 0.0619
+	val_loss = 1.6021, after epoch 12
+
+	Comments:
+	Training set loss starts to diverge quickly after early convergence
+	Pretty good.  Equivalent to 6314 or better.
+
+
+=================
+model_dotnum_epoch200_seed3750_usdot_synth_ctc_arch.json
+model_dotnum_epoch200_seed3750_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+***	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 512
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(25000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(25000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+***	optimizer = Adam
+
+	1. 200 epochs with seed=3750
+
+	loss = 0.6331
+	val_loss = 1.0978
+
+	Comments:
+	Very good results (best so far) but quick convergence then divergence during training. Learning rate probably too high.
+	Best validation after 16 epochs, then divergence.
+
+
+=================
+model_dotnum_epoch050_seed6616_usdot_synth_ctc_arch.json
+model_dotnum_epoch050_seed6616_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+***	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 512
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+***	optimizer = Adam(lr=0.0001)		# default lr=0.001, so lowering it by 10x
+
+	1. 50 epochs with seed=6616
+
+	loss = -0.3339
+	val_loss = 1.9058
+
+	Comments:
+	Training loss converged much better and lower, but validation didn't get as low as best trainings to date, then diverged.
+	Try adding dropout.
+
+
+=================
+model_dotnum_epoch200_seed0859_usdot_synth_ctc_arch.json
+model_dotnum_epoch200_seed0859_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+***	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 512
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+***	optimizer = Adam(lr=0.0001)		# default lr=0.001, so lowering it by 10x
+***	dropout 0.5 layer after reshape layer
+
+	1. 200 epochs with seed=0859
+
+	loss = 0.3788
+	val_loss = 1.2063
+
+	Comments:
+	Good.  Sometimes error on last digit.  Try loosening crop around text.  Except paint_text function is doing it, with no user control over that.
+
+
+=================
+model_dotnum_epoch200_seed9322_usdot_synth_ctc_arch.json
+model_dotnum_epoch200_seed9322_usdot_synth_ctc_weights.h5
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+***	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 512
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(15000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+***	optimizer = Adam(lr=0.0001)		# default lr=0.001, so lowering it by 10x
+***	dropout 0.25 layer after reshape layer 		***  <--- this may have been important
+***	dropout 0.25 layer between GRU nConvLayers 	***  <--- this may have been important
+
+	1. 200 epochs with seed=9322
+
+	loss = 0.3671
+	val_loss = 0.8768, min after epoch 70
+
+	Comments:
+	Very good.  Sometimes error on last digit.  Try loosening crop around text.  Except paint_text function is doing it, with no user control over that.
+
+
+====================================================
+TODO:
+-Add real data
+-Dropout after reshape (can I set the dimension on which the dropout operates?)
+-Lower dropout rate
+-Larger GRUs
+
+
+
+
