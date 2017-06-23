@@ -368,9 +368,45 @@ model_dotnum_epoch200_seed9322_usdot_synth_ctc_weights.h5
 	Very good.  Sometimes error on last digit.  Try loosening crop around text.  Except paint_text function is doing it, with no user control over that.
 
 
+=================
+=================
+
+	Architecture
+	------------
+	nKernSize = 3
+***	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 512
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(10000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(32 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+***	optimizer = Adam(lr=0.0001)		# default lr=0.001, so lowering it by 10x
+***	dropout 0.25 layer after reshape layer 		***  <--- this may have been important
+***	dropout 0.25 layer between GRU nConvLayers 	***  <--- this may have been important
+***	Real data, 1100 images (5000+ patches), with validation set of 14 real unique DOTs (#s not used in training) and 18 synthetic positive and negative samples
+
+	1. 100 epochs with seed=
+
+	loss = 
+	val_loss = 
+
+	Comments:
+
 ====================================================
 TODO:
 -Add real data
+-Add decoding + accuracy metric
 -Dropout after reshape (can I set the dimension on which the dropout operates?)
 -Lower dropout rate
 -Larger GRUs

@@ -410,7 +410,7 @@ def get_data_pos(nSamples, inputSeqLen):
         data[i,:,:,0] = im
 
         labels[i, 0:(nDigits[i]*2+1)] = digits_to_labels(digits)
-        input_length[i] = inputSeqLen - 2   # first two not used for loss function.  Or is this not image width? NOT CLEAR.
+        input_length[i] = inputSeqLen - 2   # first two not used for loss function
         label_length[i] = nDigits[i]*2+1
 
     return data, labels, input_length, label_length, textlines, dotnumbers, maxTotalLength
@@ -450,7 +450,7 @@ def get_data_neg(nSamples, maxInputLength, maxOutputLen, inputSeqLen):
     maxNumLength = 8    # maximum number of digits in DOT number, e.g., 12345678.  Need to pass in as an argument.
     labels = 11*np.ones((nSamples,maxNumLength*2+1))   # label 11 is the 'nothing/blank' label
     label_length = np.ones((nSamples,1))
-    input_length = np.ones((nSamples,1)) * (inputSeqLen - 2)   # first two not used for loss function.  Or is this not image width? NOT CLEAR.
+    input_length = np.ones((nSamples,1)) * (inputSeqLen - 2)   # first two not used for loss function
 
     return data, labels, input_length, label_length, textlines
 
@@ -461,19 +461,19 @@ def get_data_neg(nSamples, maxInputLength, maxOutputLen, inputSeqLen):
 ##=============================================================
 
 ## Data array dimension ordering is (samples, sequence_length, input_nodes).
-epochs = 200
+epochs = 100
 BATCH_SIZE = 32
 nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
-nNeg = int((BATCH_SIZE-14) / BATCH_SIZE) * BATCH_SIZE
+nNeg = int(32 / BATCH_SIZE) * BATCH_SIZE - 14
 bInvertSeq = False
 
 print('\nBuilding training data set...')
-dataPos, labelsPos, inputLengthPos, labelLengthPos, lineStringsPos, dotStringsPos, maxInputStringLength = get_data_pos(nPos, 64)
+dataPos, labelsPos, inputLengthPos, labelLengthPos, lineStringsPos, dotStringsPos, maxInputStringLength = get_data_pos(nPos, 64) # 64 for 2 pooling layers with input im of 256 width: 256/2^2
 dataPos = np.transpose(dataPos,(0,2,1,3))
 dataPos = np.flip(dataPos, axis=2)
 
 print('Building validation data set...')
-dataNeg, labelsNeg, inputLengthNeg, labelLengthNeg, lineStringsNeg = get_data_neg(nNeg, maxInputStringLength, 8, 64)
+dataNeg, labelsNeg, inputLengthNeg, labelLengthNeg, lineStringsNeg = get_data_neg(nNeg, maxInputStringLength, 8, 64) # 64 for 2 pooling layers with input im of 256 width: 256/2^2
 dataNeg = np.transpose(dataNeg,(0,2,1,3))
 dataNeg = np.flip(dataNeg, axis=2)
 
@@ -538,8 +538,11 @@ dataReal = np.transpose(dataDict['stack'],(0,2,1,3))
 dataReal = np.flip(dataReal, axis=2)
 if bInvertSeq:
     dataReal = np.flip(dataReal, axis=1)
-labelsReal = dataDict['labels_onehot']
+# labelsReal = dataDict['labels_onehot']
+labelsReal = dataDict['labels']
 lineStringsReal = dataDict['labels_string']
+inputLengthReal = dataDict['input_length']
+labelLengthReal = dataDict['label_length']
 del dataDict
 
 ## Compute histogram of real DOT numbers. Use numbers that only occur once as the validation data.
@@ -563,6 +566,10 @@ dataTrain = np.concatenate((dataTrain, dataReal[ixTrainReal]))
 dataVal = np.concatenate((dataVal, dataReal[ixValReal]))
 labelsTrain = np.concatenate((labelsTrain, labelsReal[ixTrainReal]))
 labelsVal = np.concatenate((labelsVal, labelsReal[ixValReal]))
+inputLengthTrain = np.concatenate((inputLengthTrain, inputLengthReal[ixTrainReal]))
+inputLengthVal = np.concatenate((inputLengthVal, inputLengthReal[ixValReal]))
+labelLengthTrain = np.concatenate((labelLengthTrain, labelLengthReal[ixTrainReal]))
+labelLengthVal = np.concatenate((labelLengthVal, labelLengthReal[ixValReal]))
 lineStringsTrain = lineStringsTrain + lineStringsRealTrain
 lineStringsVal = lineStringsVal + lineStringsRealVal
 del dataReal, labelsReal, lineStringsReal
@@ -573,6 +580,8 @@ indices = np.arange(len(dataTrain))
 np.random.shuffle(indices)
 dataTrain = dataTrain[indices]
 labelsTrain = labelsTrain[indices]
+inputLengthTrain = inputLengthTrain[indices]
+labelLengthTrain = labelLengthTrain[indices]
 lineStringsTrain = [lineStringsTrain[i] for i in indices]
 
 
