@@ -369,6 +369,8 @@ model_dotnum_epoch200_seed9322_usdot_synth_ctc_weights.h5
 
 
 =================
+model_dotnum_epoch100_seed6357_usdot_synth_ctc_arch.json
+model_dotnum_epoch100_seed6357_usdot_synth_ctc_weights.h5
 =================
 
 	Architecture
@@ -389,28 +391,24 @@ model_dotnum_epoch200_seed9322_usdot_synth_ctc_weights.h5
 	Synthetic test/train images only
 	BATCH_SIZE = 32
 	nPos = int(10000 / BATCH_SIZE) * BATCH_SIZE
-	nNeg = int(32 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(10000 / BATCH_SIZE) * BATCH_SIZE
 	bInvertSeq = False
 ***	optimizer = Adam(lr=0.0001)		# default lr=0.001, so lowering it by 10x
 ***	dropout 0.25 layer after reshape layer 		***  <--- this may have been important
 ***	dropout 0.25 layer between GRU nConvLayers 	***  <--- this may have been important
-***	Real data, 1100 images (5000+ patches), with validation set of 14 real unique DOTs (#s not used in training) and 18 synthetic positive and negative samples
+***	Real data + synth data, 1100 real images (5000+ patches), with validation set of 14 real unique DOTs (#s not used in training) and 18 synthetic positive and negative samples
 
-	1. 100 epochs with seed=
+	1. 100 epochs with seed=6357
 
-	loss = 
-	val_loss = 
+	loss = -0.3305
+	val_loss = 1.6781 (not comparable to previous runs, since just using a few samples in validation set, mix of real and synthetic)
 
 	Comments:
+***	Excellent!  Great job on all well-cropped real data.  Just need to create a good decoder to get actual digits from sequential softmax output.
 
 ====================================================
 TODO:
--Add real data
 -Add decoding + accuracy metric
--Dropout after reshape (can I set the dimension on which the dropout operates?)
--Lower dropout rate
--Larger GRUs
-
-
-
+-Smaller GRUs?
+-Model with seed 6357 is very good.  May eventually try scaling down model to reduce parameters.  
 

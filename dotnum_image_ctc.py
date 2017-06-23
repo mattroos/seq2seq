@@ -463,8 +463,8 @@ def get_data_neg(nSamples, maxInputLength, maxOutputLen, inputSeqLen):
 ## Data array dimension ordering is (samples, sequence_length, input_nodes).
 epochs = 100
 BATCH_SIZE = 32
-nPos = int(15000 / BATCH_SIZE) * BATCH_SIZE
-nNeg = int(32 / BATCH_SIZE) * BATCH_SIZE - 14
+nPos = int(10000 / BATCH_SIZE) * BATCH_SIZE
+nNeg = int(10000 / BATCH_SIZE) * BATCH_SIZE
 bInvertSeq = False
 
 print('\nBuilding training data set...')
@@ -512,9 +512,9 @@ lineStringsAll = [lineStringsAll[i] for i in indices]
 # dataAll += np.random.uniform(-noiseMag,noiseMag,dataAll.shape)
 
 ## Split into train and validation sets
-percentTrain = 80
-split_at = int( len(dataAll) * percentTrain/100)
-# split_at = len(dataAll)-(BATCH_SIZE-14)
+# percentTrain = 80
+# split_at = int( len(dataAll) * percentTrain/100)
+split_at = len(dataAll)-(BATCH_SIZE-14)
 (dataTrain, dataVal) = dataAll[:split_at], dataAll[split_at:]
 (labelsTrain, labelsVal) = labelsAll[:split_at], labelsAll[split_at:]
 (inputLengthTrain, inputLengthVal) = inputLengthAll[:split_at], inputLengthAll[split_at:]
