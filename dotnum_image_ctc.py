@@ -461,7 +461,7 @@ def get_data_neg(nSamples, maxInputLength, maxOutputLen, inputSeqLen):
 ##=============================================================
 
 ## Data array dimension ordering is (samples, sequence_length, input_nodes).
-epochs = 100
+epochs = 200
 BATCH_SIZE = 32
 nPos = int(10000 / BATCH_SIZE) * BATCH_SIZE
 nNeg = int(10000 / BATCH_SIZE) * BATCH_SIZE
@@ -595,8 +595,8 @@ nCols = nRows*2
 nChan = 1
 
 RNN = layers.GRU   # Try LSTM, GRU, or SimpleRNN
-# HIDDEN_SIZE = 256
-HIDDEN_SIZE = 512
+HIDDEN_SIZE = 256
+#HIDDEN_SIZE = 512
 DECODE_LAYERS = 1
 
 
@@ -706,8 +706,8 @@ Model(inputs=input_data, outputs=y_pred).summary()
 ## Load existing (best) model if desired
 bUseSavedModel = False
 if bUseSavedModel:
-    model = model_from_json(open('model_dotnum_epoch200_seed9918_usdot_synth_ctc_arch.json').read())
-    model.load_weights('model_dotnum_epoch200_seed9918_usdot_synth_ctc_weights.h5')
+    model = model_from_json(open('model_dotnum_epoch100_seed1541_usdot_synth_ctc_arch.json').read())
+    model.load_weights('model_dotnum_epoch100_seed1541_usdot_synth_ctc_weights.h5')
     # model = model_from_json(open('model_dotnum_epoch075_seed0127_usdot_real_arch.json').read())
     # model.load_weights('model_dotnum_epoch075_seed0127_usdot_real_weights.h5')
     startEpoch = 99  # 0 indexed?

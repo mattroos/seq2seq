@@ -406,9 +406,92 @@ model_dotnum_epoch100_seed6357_usdot_synth_ctc_weights.h5
 	Comments:
 ***	Excellent!  Great job on all well-cropped real data.  Just need to create a good decoder to get actual digits from sequential softmax output.
 
+
+=================
+model_dotnum_epoch100_seed1541_usdot_synth_ctc_arch.json
+model_dotnum_epoch100_seed1541_usdot_synth_ctc_weights.h5
+=================
+	Try model like previous one (best so far) but with smaller GRU sizes.
+
+	Architecture
+	------------
+	nKernSize = 3
+	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 256
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(10000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(10000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+	optimizer = Adam(lr=0.0001)		# default lr=0.001, so lowering it by 10x
+	dropout 0.25 layer after reshape layer 		***  <--- this may have been important
+	dropout 0.25 layer between GRU nConvLayers 	***  <--- this may have been important
+	Real data + synth data, 1100 real images (5000+ patches), with validation set of 14 real unique DOTs (#s not used in training) and 18 synthetic positive and negative samples
+
+	1. 100 epochs with seed=1541
+
+	loss = 2.9326
+	val_loss = 6.00339
+
+	Comments:
+***	Losses of both training and validation set were still improving.  NEED TO TRAIN WITH MORE EPOCHS.
+
+
+=================
+model_dotnum_epoch200_seed8413_usdot_synth_ctc_arch.json
+model_dotnum_epoch200_seed8413_usdot_synth_ctc_weights.h5
+=================
+	Try model like previous one (best so far) but with smaller GRU sizes.
+
+	Architecture
+	------------
+	nKernSize = 3
+	nFilters = (8, 16)
+	nConvLayers = len(nFilters)
+	nRows = 32
+	nCols = nRows*2
+	nChan = 1
+
+	RNN = layers.GRU
+***	HIDDEN_SIZE = 256
+
+
+	Training
+	--------
+	Synthetic test/train images only
+	BATCH_SIZE = 32
+	nPos = int(10000 / BATCH_SIZE) * BATCH_SIZE
+	nNeg = int(10000 / BATCH_SIZE) * BATCH_SIZE
+	bInvertSeq = False
+	optimizer = Adam(lr=0.0001)		# default lr=0.001, so lowering it by 10x
+	dropout 0.25 layer after reshape layer 		***  <--- this may have been important
+	dropout 0.25 layer between GRU nConvLayers 	***  <--- this may have been important
+	Real data + synth data, 1100 real images (5000+ patches), with validation set of 14 real unique DOTs (#s not used in training) and 18 synthetic positive and negative samples
+
+	1. 200 epochs with seed=
+
+	loss = -0.374778
+	val_loss = 1.19393, best at 200 epochs.  May get a little better with more iterations, but not by much.
+
+	Comments:
+***	Excellent!  Great job on all well-cropped real data.  Just need to create a good decoder to get actual digits from sequential softmax output.
+	Qualitatively looks to be as good as model with 512-node GRUs.
+
+
 ====================================================
 TODO:
+-Build code/algorithm to get DOT number sequence from GRU output.
 -Add decoding + accuracy metric
--Smaller GRUs?
--Model with seed 6357 is very good.  May eventually try scaling down model to reduce parameters.  
+-Model with seed 6357 is very good, with 512 nodes per GRU
+-Model with seed 8413 is very good, with 256 nodes per GRU
 
