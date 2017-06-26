@@ -866,11 +866,13 @@ softmaxVal, lossVal = model_pred.predict(inVal, batch_size=BATCH_SIZE, verbose=1
 thDigit = 0.3
 thBreak = 0.5
 digitsAll = []
+certaintyAll = []
 for iSample in range(nSamples):
     state = 11
     imax = np.argmax(softmaxVal[0,:,:],axis=1)
     digitsThisSample = []
     lastDigitMax = 0
+    certaintyByDigit = []
     for iSlice in range(1,softmaxVal.shape[1]):
         if state==11:
             if softmaxVal[iSample,iSlice,10] >= thBreak:
@@ -881,6 +883,7 @@ for iSample in range(nSamples):
             if mx >= thDigit:
                 state = 0
                 digitsThisSample.append(digArgMax)
+                certaintyByDigit.append(mx)
                 lastDigitMax = mx
         elif state==0:
             digArgMax = np.argmax(softmaxVal[iSample,iSlice,0:10])
@@ -888,10 +891,13 @@ for iSample in range(nSamples):
             if mx > lastDigitMax:
                 state = 0
                 digitsThisSample[-1] = digArgMax # replace digit since slice with higher probability found before going back to char break
+                certaintyByDigit[-1] = mx
                 lastDigitMax = mx
             if softmaxVal[iSample,iSlice,10] >= thBreak:
                 state = 10
     digitsAll.append(digitsThisSample)
+    # certaintyAll.append(min(certaintyByDigit))
+    certaintyAll.append(reduce(lambda x, y: x*y, certaintyByDigit)) # use product of all digit uncertainties to get DOT uncertainty
 
 
 plt.figure(1)
@@ -904,7 +910,7 @@ for iSample in range(nSamples):
     plt.subplot(2,1,2)
     plt.imshow(np.transpose(softmaxVal[iSample,:,:],(1,0)))
     plt.clim(0,1)
-    plt.title('Label: ' + lineStringsVal[iSample] + ';  Decode: ' + ''.join(str(i) for i in digitsAll[iSample]))
+    plt.title('Label: ' + lineStringsVal[iSample] + ';  Decode: ' + ''.join(str(i) for i in digitsAll[iSample]) + ', Certainty=' + str(certaintyAll[iSample]))
     plt.show()
     plt.waitforbuttonpress()
 
